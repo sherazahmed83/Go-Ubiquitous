@@ -47,14 +47,14 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     private final String LOG_TAG = MainActivity.class.getSimpleName();
     private static final String DETAILFRAGMENT_TAG = "DFTAG";
     private final static int PLAY_SERVICES_RESOLUTION_REQUEST = 9000;
-    public static final String PROPERTY_REG_ID = "registration_id";
+    public static final String PROPERTY_REG_ID = "sunshine-1049";
     private static final String PROPERTY_APP_VERSION = "appVersion";
 
     /**
      * Substitute you own project number here. This project number comes
      * from the Google Developers Console.
      */
-    static final String PROJECT_NUMBER = "Your Project Number";
+    static final String PROJECT_NUMBER = "720061411709";
 
     private boolean mTwoPane;
     private String mLocation;

@@ -35,6 +35,13 @@ import com.example.android.sunshine.app.R;
 import com.example.android.sunshine.app.Utility;
 import com.example.android.sunshine.app.data.WeatherContract;
 import com.example.android.sunshine.app.muzei.WeatherMuzeiSource;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.Wearable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -69,12 +76,22 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             WeatherContract.WeatherEntry.COLUMN_MIN_TEMP,
             WeatherContract.WeatherEntry.COLUMN_SHORT_DESC
     };
+    private final String PATH_WITH_FEATURE = "/watch_face/WeatherInfo";
+
+    private final String KEY_WEATHER_ID = "weather_id";
+    private final String KEY_TEMPERATURE_HIGH = "temperature_high";
+    private final String KEY_TEMPERATURE_LOW = "temperature_low";
 
     // these indices must match the projection
     private static final int INDEX_WEATHER_ID = 0;
     private static final int INDEX_MAX_TEMP = 1;
     private static final int INDEX_MIN_TEMP = 2;
     private static final int INDEX_SHORT_DESC = 3;
+
+    private int mWatchFaceWeatherId = -1;
+    private double mWatchFaceTempHigh = 0;
+    private double mWatchFaceTempLow = 0;
+
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({LOCATION_STATUS_OK, LOCATION_STATUS_SERVER_DOWN, LOCATION_STATUS_SERVER_INVALID,  LOCATION_STATUS_UNKNOWN, LOCATION_STATUS_INVALID})
@@ -275,6 +292,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             // now we work exclusively in UTC
             dayTime = new Time();
 
+            boolean isWatchUpdateForTodayDone = false;
+            boolean isTodayWeatherProcessed = false;
+
             for(int i = 0; i < weatherArray.length(); i++) {
                 // These are the values that will be collected.
                 long dateTime;
@@ -313,6 +333,22 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 high = temperatureObject.getDouble(OWM_MAX);
                 low = temperatureObject.getDouble(OWM_MIN);
 
+                if(!isWatchUpdateForTodayDone && !isTodayWeatherProcessed) {
+                    isTodayWeatherProcessed = true;
+
+                    if (mWatchFaceWeatherId == weatherId
+                            && mWatchFaceTempHigh == high
+                            && mWatchFaceTempLow == low) {
+
+                        continue;
+                    }
+
+                    mWatchFaceWeatherId = weatherId;
+                    mWatchFaceTempHigh  = high;
+                    mWatchFaceTempLow   = low;
+                    isWatchUpdateForTodayDone = true;
+                }
+
                 ContentValues weatherValues = new ContentValues();
 
                 weatherValues.put(WeatherContract.WeatherEntry.COLUMN_LOC_KEY, locationId);
@@ -341,6 +377,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                         WeatherContract.WeatherEntry.COLUMN_DATE + " <= ?",
                         new String[] {Long.toString(dayTime.setJulianDay(julianStartDay-1))});
 
+                if (isWatchUpdateForTodayDone) {
+                    updateWatchFace();
+                }
                 updateWidgets();
                 updateMuzei();
                 notifyWeather();
@@ -353,6 +392,17 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             e.printStackTrace();
             setLocationStatus(getContext(), LOCATION_STATUS_SERVER_INVALID);
         }
+    }
+
+    private void updateWatchFace () {
+        PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(PATH_WITH_FEATURE);
+        DataMap dataMap = putDataMapRequest.getDataMap();
+
+        dataMap.putInt(KEY_WEATHER_ID, mWatchFaceWeatherId);
+        dataMap.putDouble(KEY_TEMPERATURE_HIGH, mWatchFaceTempHigh);
+        dataMap.putDouble(KEY_TEMPERATURE_LOW, mWatchFaceTempLow);
+
+        new GoogleWatchFaceUpdater(getContext(), putDataMapRequest);
     }
 
     private void updateWidgets() {
@@ -632,5 +682,50 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         SharedPreferences.Editor spe = sp.edit();
         spe.putInt(c.getString(R.string.pref_location_status_key), locationStatus);
         spe.commit();
+    }
+
+    class GoogleWatchFaceUpdater implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
+        private final String TAG = GoogleWatchFaceUpdater.class.getSimpleName();
+        private GoogleApiClient mGoogleApiClient;
+        private PutDataMapRequest mPutDataMapRequest;
+
+        public GoogleWatchFaceUpdater (Context context, PutDataMapRequest putDataMapRequest) {
+            mPutDataMapRequest = putDataMapRequest;
+            mGoogleApiClient = new GoogleApiClient.Builder(context)
+                    .addConnectionCallbacks(this)
+                    .addOnConnectionFailedListener(this)
+                    .addApi(Wearable.API)
+                    .build();
+            mGoogleApiClient.connect();
+        }
+
+        @Override // GoogleApiClient.ConnectionCallbacks
+        public void onConnected(Bundle connectionHint) {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "onConnected: " + connectionHint);
+            }
+
+            Wearable.DataApi.putDataItem(mGoogleApiClient, mPutDataMapRequest.asPutDataRequest())
+                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                        @Override
+                        public void onResult(DataApi.DataItemResult dataItemResult) {
+                            Log.d(TAG, "SaveConfig: " + dataItemResult.getStatus() + ", " + dataItemResult.getDataItem().getUri());
+                        }
+                    });
+        }
+
+        @Override // GoogleApiClient.ConnectionCallbacks
+        public void onConnectionSuspended(int cause) {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "onConnectionSuspended: " + cause);
+            }
+        }
+
+        @Override // GoogleApiClient.OnConnectionFailedListener
+        public void onConnectionFailed(ConnectionResult result) {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "onConnectionFailed: " + result);
+            }
+        }
     }
 }
